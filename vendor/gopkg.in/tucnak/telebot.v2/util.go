@@ -2,7 +2,6 @@ package telebot
 
 import (
 	"encoding/json"
-	"fmt"
 	"strconv"
 
 	"github.com/pkg/errors"
@@ -19,7 +18,7 @@ func (b *Bot) deferDebug() {
 		if err, ok := r.(error); ok {
 			b.debug(err)
 		} else if str, ok := r.(string); ok {
-			b.debug(fmt.Errorf("%s", str))
+			b.debug(errors.Errorf("%s", str))
 		}
 	}
 }
@@ -62,7 +61,20 @@ func extractMsgResponse(respJSON []byte) (*Message, error) {
 
 	err := json.Unmarshal(respJSON, &resp)
 	if err != nil {
-		return nil, errors.Wrap(err, "bad response json")
+		var resp struct {
+			Ok          bool
+			Result      bool
+			Description string
+		}
+
+		err := json.Unmarshal(respJSON, &resp)
+		if err != nil {
+			return nil, errors.Wrap(err, "bad response json")
+		}
+
+		if !resp.Ok {
+			return nil, errors.Errorf("api error: %s", resp.Description)
+		}
 	}
 
 	if !resp.Ok {
@@ -164,26 +176,30 @@ func embedSendOptions(params map[string]string, opt *SendOptions) {
 	}
 
 	if opt.ReplyMarkup != nil {
-		keys := opt.ReplyMarkup.InlineKeyboard
-		if len(keys) > 0 && len(keys[0]) > 0 {
-			for i, _ := range keys {
-				for j, _ := range keys[i] {
-					key := &keys[i][j]
-					if key.Unique != "" {
-						// Format: "\f<callback_name>|<data>"
-						data := key.Data
-						if data == "" {
-							key.Data = "\f" + key.Unique
-						} else {
-							key.Data = "\f" + key.Unique + "|" + data
-						}
-					}
+		processButtons(opt.ReplyMarkup.InlineKeyboard)
+		replyMarkup, _ := json.Marshal(opt.ReplyMarkup)
+		params["reply_markup"] = string(replyMarkup)
+	}
+}
+
+func processButtons(keys [][]InlineButton) {
+	if keys == nil || len(keys) < 1 || len(keys[0]) < 1 {
+		return
+	}
+
+	for i, _ := range keys {
+		for j, _ := range keys[i] {
+			key := &keys[i][j]
+			if key.Unique != "" {
+				// Format: "\f<callback_name>|<data>"
+				data := key.Data
+				if data == "" {
+					key.Data = "\f" + key.Unique
+				} else {
+					key.Data = "\f" + key.Unique + "|" + data
 				}
 			}
 		}
-
-		replyMarkup, _ := json.Marshal(opt.ReplyMarkup)
-		params["reply_markup"] = string(replyMarkup)
 	}
 }
 

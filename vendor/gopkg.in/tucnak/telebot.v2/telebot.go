@@ -76,6 +76,11 @@ const (
 	//
 	// Handler: func(*Query)
 	OnQuery = "\aquery"
+
+	// Will fire on chosen inline results.
+	//
+	// Handler: func(*ChosenInlineResult)
+	OnChosenInlineResult = "\achosen_inline_result"
 )
 
 // ChatAction is a client-side status indicating bot activity.
@@ -123,10 +128,11 @@ const (
 type ChatType string
 
 const (
-	ChatPrivate    ChatType = "private"
-	ChatGroup      ChatType = "group"
-	ChatSuperGroup ChatType = "supergroup"
-	ChatChannel    ChatType = "channel"
+	ChatPrivate        ChatType = "private"
+	ChatGroup          ChatType = "group"
+	ChatSuperGroup     ChatType = "supergroup"
+	ChatChannel        ChatType = "channel"
+	ChatChannelPrivate ChatType = "privatechannel"
 )
 
 // MemberStatus is one's chat status

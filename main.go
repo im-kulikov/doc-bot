@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/im-kulikov/doc-bot/internal"
-	"github.com/rs/zerolog/log"
+	"github.com/im-kulikov/doc-bot/log"
 	tb "gopkg.in/tucnak/telebot.v2"
 )
 
@@ -23,7 +23,7 @@ type Bot struct {
 
 func (b *Bot) sendMessage(sender *tb.User, message string) {
 	if _, err := b.self.Send(sender, message, tb.ModeMarkdown); err != nil {
-		log.Error().Msgf("Error: %v", err)
+		log.G().Errorf("Error: %v", err)
 	}
 }
 
@@ -47,21 +47,21 @@ func (b *Bot) handler(m *tb.Message) {
 		items[0][1],
 	)
 
-	log.Info().Msgf("search for query '%s'", items[0][1])
+	log.G().Infof("search for query '%s'", items[0][1])
 
 	b.sendMessage(m.Sender, message)
 
 	query = internal.QueryRe.ReplaceAllString(items[0][1], "+")
 
 	if results, err = internal.SearchInDocuments(query); err != nil {
-		log.Error().Msgf("search results error: %v", err)
+		log.G().Errorf("search results error: %v", err)
 
 		b.sendMessage(m.Sender, "Ошибка запроса")
 		return
 	}
 
 	if err = b.search.Execute(buffer, results); err != nil {
-		log.Error().Msgf("template error: %v", err)
+		log.G().Errorf("template error: %v", err)
 		b.sendMessage(m.Sender, "Ошибка ответа")
 		return
 	}
@@ -90,21 +90,20 @@ func main() {
 		instance *Bot
 	)
 
-	log.Output(os.Stdout)
-	log.Info().Msgf(internal.InfoTpl, Version, BuildTime)
+	log.G().Infof(internal.InfoTpl, Version, BuildTime)
 
 	if bot, err = tb.NewBot(tb.Settings{
 		Token:  os.Getenv("TELEGRAM_TOKEN"),
 		Poller: &tb.LongPoller{Timeout: 10 * time.Second},
 	}); err != nil {
-		log.Panic().Msgf("Error on connect: %v", err)
+		log.G().Panicf("Error on connect: %v", err)
 	}
 
 	instance = new(Bot)
 	instance.self = bot
 
 	if instance.search, err = internal.SearchTemplate(); err != nil {
-		log.Panic().Msgf("Error on template: %v", err)
+		log.G().Panicf("Error on template: %v", err)
 	}
 
 	bot.Handle("/start", instance.hello)

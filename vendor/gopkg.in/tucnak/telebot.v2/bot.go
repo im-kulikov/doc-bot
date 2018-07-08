@@ -20,14 +20,20 @@ func NewBot(pref Settings) (*Bot, error) {
 		pref.Updates = 100
 	}
 
+	client := pref.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+
 	bot := &Bot{
-		Token:   pref.Token,
-		Updates: make(chan Update, pref.Updates),
-		Poller:  pref.Poller,
+		Token:    pref.Token,
+		Updates:  make(chan Update, pref.Updates),
+		Poller:   pref.Poller,
 
 		handlers: make(map[string]interface{}),
 		stop:     make(chan struct{}),
 		reporter: pref.Reporter,
+		client:   client,
 	}
 
 	user, err := bot.getMe()
@@ -49,6 +55,7 @@ type Bot struct {
 	handlers map[string]interface{}
 	reporter func(error)
 	stop     chan struct{}
+	client   *http.Client
 }
 
 // Settings represents a utility struct for passing certain
@@ -66,6 +73,9 @@ type Settings struct {
 	// Reporter is a callback function that will get called
 	// on any panics recovered from endpoint handlers.
 	Reporter func(error)
+
+	// HTTP Client used to make requests to telegram api
+	Client *http.Client
 }
 
 // Update object represents an incoming update.
@@ -78,6 +88,20 @@ type Update struct {
 	EditedChannelPost *Message  `json:"edited_channel_post,omitempty"`
 	Callback          *Callback `json:"callback_query,omitempty"`
 	Query             *Query    `json:"inline_query,omitempty"`
+
+	ChosenInlineResult *ChosenInlineResult `json:"chosen_inline_result,omitempty"`
+}
+
+// ChosenInlineResult represents a result of an inline query that was chosen
+// by the user and sent to their chat partner.
+type ChosenInlineResult struct {
+	ResultID string `json:"result_id"`
+	Query    string `json:"query"`
+	// Inline messages only!
+	MessageID string `json:"inline_message_id"`
+
+	From     User      `json:"from"`
+	Location *Location `json:"location,omitempty"`
 }
 
 // Handle lets you set the handler for some command name or
@@ -328,6 +352,24 @@ func (b *Bot) incomingUpdate(upd *Update) {
 		}
 		return
 	}
+
+	if upd.ChosenInlineResult != nil {
+		if handler, ok := b.handlers[OnChosenInlineResult]; ok {
+			if handler, ok := handler.(func(*ChosenInlineResult)); ok {
+				// i'm not 100% sure that any of the values
+				// won't be cached, so I pass them all in:
+				go func(b *Bot, handler func(*ChosenInlineResult),
+					r *ChosenInlineResult) {
+					defer b.deferDebug()
+					handler(r)
+				}(b, handler, upd.ChosenInlineResult)
+
+			} else {
+				panic("telebot: chosen inline result handler is bad")
+			}
+		}
+		return
+	}
 }
 
 func (b *Bot) handle(end string, m *Message) bool {
@@ -353,6 +395,11 @@ func (b *Bot) handle(end string, m *Message) bool {
 func (b *Bot) handleMedia(m *Message) bool {
 	if m.Photo != nil {
 		b.handle(OnPhoto, m)
+		return true
+	}
+
+	if m.Voice != nil {
+		b.handle(OnVoice, m)
 		return true
 	}
 
@@ -587,10 +634,10 @@ func (b *Bot) Edit(message Editable, what interface{}, options ...interface{}) (
 
 	// if inline message
 	if chatID == 0 {
-		params["inline_message_id"] = strconv.Itoa(messageID)
+		params["inline_message_id"] = messageID
 	} else {
 		params["chat_id"] = strconv.FormatInt(chatID, 10)
-		params["message_id"] = strconv.Itoa(messageID)
+		params["message_id"] = messageID
 	}
 
 	sendOpts := extractOptions(options)
@@ -614,10 +661,10 @@ func (b *Bot) EditCaption(originalMsg Editable, caption string) (*Message, error
 
 	// if inline message
 	if chatID == 0 {
-		params["inline_message_id"] = strconv.Itoa(messageID)
+		params["inline_message_id"] = messageID
 	} else {
 		params["chat_id"] = strconv.FormatInt(chatID, 10)
-		params["message_id"] = strconv.Itoa(messageID)
+		params["message_id"] = messageID
 	}
 
 	respJSON, err := b.Raw("editMessageCaption", params)
@@ -644,7 +691,7 @@ func (b *Bot) Delete(message Editable) error {
 
 	params := map[string]string{
 		"chat_id":    strconv.FormatInt(chatID, 10),
-		"message_id": strconv.Itoa(messageID),
+		"message_id": messageID,
 	}
 
 	respJSON, err := b.Raw("deleteMessage", params)
@@ -683,6 +730,10 @@ func (b *Bot) Notify(recipient Recipient, action ChatAction) error {
 // will result in an error.
 func (b *Bot) Answer(query *Query, response *QueryResponse) error {
 	response.QueryID = query.ID
+
+	for _, result := range response.Results {
+		result.Process()
+	}
 
 	respJSON, err := b.Raw("answerInlineQuery", response)
 	if err != nil {
@@ -949,7 +1000,7 @@ func (b *Bot) Pin(message Editable, options ...interface{}) error {
 
 	params := map[string]string{
 		"chat_id":    strconv.FormatInt(chatID, 10),
-		"message_id": strconv.Itoa(messageID),
+		"message_id": messageID,
 	}
 
 	sendOpts := extractOptions(options)
@@ -1008,6 +1059,11 @@ func (b *Bot) ChatByID(id string) (*Chat, error) {
 
 	if !resp.Ok {
 		return nil, errors.Errorf("api error: %s", resp.Description)
+	}
+
+	if resp.Result.Type == ChatChannel && resp.Result.Username != "" {
+		//Channel is Private
+		resp.Result.Type = ChatChannelPrivate
 	}
 
 	return resp.Result, nil

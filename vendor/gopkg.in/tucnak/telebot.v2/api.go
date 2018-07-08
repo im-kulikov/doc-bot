@@ -26,7 +26,7 @@ func (b *Bot) Raw(method string, payload interface{}) ([]byte, error) {
 		return []byte{}, wrapSystem(err)
 	}
 
-	resp, err := http.Post(url, "application/json", &buf)
+	resp, err := b.client.Post(url, "application/json", &buf)
 	if err != nil {
 		return []byte{}, errors.Wrap(err, "http.Post failed")
 	}
@@ -49,20 +49,24 @@ func (b *Bot) sendFiles(
 	writer := multipart.NewWriter(body)
 
 	for name, path := range files {
-		file, err := os.Open(path)
-		if err != nil {
-			return nil, wrapSystem(err)
-		}
-		defer file.Close()
+		if err := func() error {
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
 
-		part, err := writer.CreateFormFile(name, filepath.Base(path))
-		if err != nil {
+			part, err := writer.CreateFormFile(name, filepath.Base(path))
+			if err != nil {
+				return err
+			}
+
+			_, err = io.Copy(part, file)
+			return err
+		} (); err != nil {
 			return nil, wrapSystem(err)
 		}
 
-		if _, err = io.Copy(part, file); err != nil {
-			return nil, wrapSystem(err)
-		}
 	}
 
 	for field, value := range params {
@@ -81,7 +85,7 @@ func (b *Bot) sendFiles(
 
 	req.Header.Add("Content-Type", writer.FormDataContentType())
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := b.client.Do(req)
 	if err != nil {
 		return nil, errors.Wrap(err, "http.Post failed")
 	}
