@@ -24,5 +24,6 @@ WORKDIR /
 
 COPY --from=builder /go/bin/docbot /docbot
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /go/src/github.com/im-kulikov/doc-bot/config.yml /config.yml
 
 CMD ["/docbot"]
