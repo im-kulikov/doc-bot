@@ -1,6 +1,6 @@
 telegram:
-  token: telegram-token
-  proxy: telegram-socks5-proxy
+  token: # telegram-token
+  proxy: # telegram-socks5-proxy
   workers: 10
 
 log:
