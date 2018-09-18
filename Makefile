@@ -3,9 +3,9 @@ VERSION ?= $(shell git rev-parse --short HEAD)
 
 .PHONY: image publish
 image:
-	docker build -t imkulikov/bl-resolver:latest .
-	docker build -t imkulikov/bl-resolver:v-$(VERSION) .
+	docker build -t $(NAME):latest .
+	docker build -t $(NAME):v-$(VERSION) .
 
 publish:
-	docker push imkulikov/bl-resolver:latest
-	docker push imkulikov/bl-resolver:v-$(VERSION)
+	docker push $(NAME):latest
+	docker push $(NAME):v-$(VERSION)
