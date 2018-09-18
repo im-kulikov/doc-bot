@@ -7,7 +7,7 @@ WORKDIR /go/src/github.com/im-kulikov/doc-bot
 
 RUN set -x \
     && apk add --no-cache git \
-    && export VERSION=$(git rev-parse --verify HEAD) \
+    && export VERSION=$(git rev-parse --short HEAD) \
     && export BUILD=$(date -u +%s%N) \
     && export LDFLAGS="-w -s -X main.BuildVersion=${VERSION} -X main.BuildTime=${BUILD}" \
     && export CGO_ENABLED=0 \
