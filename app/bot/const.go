@@ -19,7 +19,7 @@ search <keyword> - поиск ключевого слова
 `
 	SearchTpl = `
 {{ if .Commands }}
-Вот что мне удалось найти:
+Вот что мне удалось найти ({{ len .Commands }} шт.):
 
 {{ range .Commands }}- [{{ .Name }}]({{ .Link }}) - {{ .Description }}
 {{ end }}

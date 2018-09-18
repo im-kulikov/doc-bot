@@ -3,7 +3,7 @@ telegram:
   proxy: # telegram-socks5-proxy
   workers: 10
 
-log:
+logger:
   level: debug
   format: console
 

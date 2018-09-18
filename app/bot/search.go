@@ -2,6 +2,7 @@ package bot
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
@@ -17,12 +18,35 @@ type SearchResults struct {
 	Commands []Command
 }
 
+var urlRegexp = regexp.MustCompile(`http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+`)
+
 func GetLink(query string, s *goquery.Selection) string {
 	if val, ok := s.Find(query).Attr("href"); ok {
 		return "https://godoc.org" + strings.TrimSpace(val)
 	}
 
 	return ""
+}
+
+func trim(str string, fn func(r rune) bool) string {
+	var result []rune
+
+	for _, i := range str {
+		if !fn(i) {
+			result = append(result, i)
+		}
+	}
+
+	return string(result)
+}
+
+func replaceLinks(str string) string {
+	items := urlRegexp.FindAllString(str, -1)
+	for _, item := range items {
+		nstr := fmt.Sprintf("[link](%s)", item)
+		str = strings.Replace(str, item, nstr, -1)
+	}
+	return str
 }
 
 func SearchInDocuments(query string) (*SearchResults, error) {
@@ -51,6 +75,11 @@ func SearchInDocuments(query string) (*SearchResults, error) {
 
 		description := s.Find("td:last-child").Text()
 		description = strings.TrimSpace(description)
+		description = trim(description, func(r rune) bool {
+			return r == 8203
+		})
+
+		description = replaceLinks(description)
 
 		if len(name) < 5 && len(description) < 5 {
 			return
