@@ -6,6 +6,8 @@ telegram:
 logger:
   level: debug
   format: console
+  trace_level: error
+  no_disclaimer: true
 
 workers:
   bot:

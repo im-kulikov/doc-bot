@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2019-01-04
+### Added
+- Added `Group` option for `Provide` to add value groups to the container without
+rewriting constructors. See package doucmentation for more information.
+
+## [1.6.0] - 2018-11-06
+### Changed
+- When an error graph is visualized, the graph is pruned so that the graph only
+  contains failure nodes.
+- Container visualization is now oriented from right to left.
+
+## [1.5.1] - 2018-11-01
+### Fixed
+- Fixed a test that was causing Dig to be unusable with Go Modules.
+
+## [1.5.0] - 2018-09-19
+### Added
+- Added a `DeferAcyclicVerification` container option that defers graph cycle
+  detection until the next Invoke.
+
+### Changed
+- Improved cycle-detection performance by 50x in certain degenerative cases.
+
 ## [1.4.0] - 2018-08-16
 ### Added
 - Added `Visualize` function to visualize the state of the container in the
@@ -120,6 +143,10 @@ First release candidate.
 
 Initial release.
 
+[1.7.0]: https://github.com/uber-go/dig/compare/v1.6.0...v1.7.0
+[1.6.0]: https://github.com/uber-go/dig/compare/v1.5.1...v1.6.0
+[1.5.1]: https://github.com/uber-go/dig/compare/v1.5.0...v1.5.1
+[1.5.0]: https://github.com/uber-go/dig/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/uber-go/dig/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/uber-go/dig/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/uber-go/dig/compare/v1.1.0...v1.2.0

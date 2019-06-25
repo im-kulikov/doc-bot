@@ -1,4 +1,4 @@
-// Copyright (c) 2018 Uber Technologies, Inc.
+// Copyright (c) 2019 Uber Technologies, Inc.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -23,13 +23,11 @@ package dig
 import (
 	"errors"
 	"fmt"
-	"io"
 	"math/rand"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
-	"text/template"
 	"time"
 
 	"go.uber.org/dig/internal/digreflect"
@@ -62,16 +60,25 @@ type optionFunc func(*Container)
 func (f optionFunc) applyOption(c *Container) { f(c) }
 
 type provideOptions struct {
-	Name string
+	Name  string
+	Group string
 }
 
 func (o *provideOptions) Validate() error {
+	if len(o.Group) > 0 && len(o.Name) > 0 {
+		return fmt.Errorf(
+			"cannot use named values with value groups: name:%q provided with group:%q", o.Name, o.Group)
+	}
+
 	// Names must be representable inside a backquoted string. The only
 	// limitation for raw string literals as per
 	// https://golang.org/ref/spec#raw_string_lit is that they cannot contain
 	// backquotes.
 	if strings.ContainsRune(o.Name, '`') {
 		return fmt.Errorf("invalid dig.Name(%q): names cannot contain backquotes", o.Name)
+	}
+	if strings.ContainsRune(o.Group, '`') {
+		return fmt.Errorf("invalid dig.Group(%q): group names cannot contain backquotes", o.Group)
 	}
 	return nil
 }
@@ -108,6 +115,18 @@ func Name(name string) ProvideOption {
 	})
 }
 
+// Group is a ProvideOption that specifies that all values produced by a
+// constructor should be added to the specified group. See also the package
+// documentation about Value Groups.
+//
+// This option cannot be provided for constructors which produce result
+// objects.
+func Group(group string) ProvideOption {
+	return provideOptionFunc(func(opts *provideOptions) {
+		opts.Group = group
+	})
+}
+
 // An InvokeOption modifies the default behavior of Invoke. It's included for
 // future functionality; currently, there are no concrete implementations.
 type InvokeOption interface {
@@ -131,6 +150,12 @@ type Container struct {
 
 	// Source of randomness.
 	rand *rand.Rand
+
+	// Flag indicating whether the graph has been checked for cycles.
+	isVerifiedAcyclic bool
+
+	// Defer acyclic check on provide until Invoke.
+	deferAcyclicVerification bool
 }
 
 // containerWriter provides write access to the Container's underlying data
@@ -211,140 +236,17 @@ func New(opts ...Option) *Container {
 	return c
 }
 
-// A VisualizeOption modifies the default behavior of Visualize.
-type VisualizeOption interface {
-	applyVisualizeOption(*visualizeOptions)
-}
-
-type visualizeOptions struct {
-	VisualizeError error
-}
-
-type visualizeOptionFunc func(*visualizeOptions)
-
-func (f visualizeOptionFunc) applyVisualizeOption(opts *visualizeOptions) { f(opts) }
-
-// VisualizeError includes a visualization of the given error in the output of
-// Visualize if an error was returned by Invoke or Provide.
+// DeferAcyclicVerification is an Option to override the default behavior
+// of container.Provide, deferring the dependency graph validation to no longer
+// run after each call to container.Provide. The container will instead verify
+// the graph on first `Invoke`.
 //
-//   if err := c.Provide(...); err != nil {
-//     dig.Visualize(c, w, dig.VisualizeError(err))
-//   }
-//
-// This option has no effect if the error was nil or if it didn't contain any
-// information to visualize.
-func VisualizeError(err error) VisualizeOption {
-	return visualizeOptionFunc(func(opts *visualizeOptions) {
-		opts.VisualizeError = err
+// Applications adding providers to a container in a tight loop may experience
+// performance improvements by initializing the container with this option.
+func DeferAcyclicVerification() Option {
+	return optionFunc(func(c *Container) {
+		c.deferAcyclicVerification = true
 	})
-}
-
-func updateGraph(dg *dot.Graph, err error) error {
-	var errors []errVisualizer
-	// Unwrap error to find the root cause.
-	for {
-		if ev, ok := err.(errVisualizer); ok {
-			errors = append(errors, ev)
-		}
-		e, ok := err.(causer)
-		if !ok {
-			break
-		}
-		err = e.cause()
-	}
-
-	// If there are no errVisualizers included, we do not modify the graph.
-	if len(errors) == 0 {
-		return nil
-	}
-
-	// We iterate in reverse because the last element is the root cause.
-	for i := len(errors) - 1; i >= 0; i-- {
-		errors[i].updateGraph(dg)
-	}
-
-	return nil
-}
-
-var _graphTmpl = template.Must(
-	template.New("DotGraph").
-		Funcs(template.FuncMap{
-			"quote": strconv.Quote,
-		}).
-		Parse(`digraph {
-	graph [compound=true];
-	{{range $g := .Groups}}
-		{{- quote .String}} [{{.Attributes}}];
-		{{range .Results}}
-			{{- quote $g.String}} -> {{quote .String}};
-		{{end}}
-	{{end -}}
-	{{range $index, $ctor := .Ctors}}
-		subgraph cluster_{{$index}} {
-			constructor_{{$index}} [shape=plaintext label={{quote .Name}}];
-			{{with .ErrorType}}color={{.Color}};{{end}}
-			{{range .Results}}
-				{{- quote .String}} [{{.Attributes}}];
-			{{end}}
-		}
-		{{range .Params}}
-			constructor_{{$index}} -> {{quote .String}} [ltail=cluster_{{$index}}{{if .Optional}} style=dashed{{end}}];
-		{{end}}
-		{{range .GroupParams}}
-			constructor_{{$index}} -> {{quote .String}} [ltail=cluster_{{$index}}];
-		{{end -}}
-	{{end}}
-	{{range .Failed.TransitiveFailures}}
-		{{- quote .String}} [color=orange];
-	{{end -}}
-	{{range .Failed.RootCauses}}
-		{{- quote .String}} [color=red];
-	{{end}}
-}`))
-
-// Visualize parses the graph in Container c into DOT format and writes it to
-// io.Writer w.
-func Visualize(c *Container, w io.Writer, opts ...VisualizeOption) error {
-	dg := c.createGraph()
-
-	var options visualizeOptions
-	for _, o := range opts {
-		o.applyVisualizeOption(&options)
-	}
-
-	if options.VisualizeError != nil {
-		if err := updateGraph(dg, options.VisualizeError); err != nil {
-			return err
-		}
-	}
-
-	return _graphTmpl.Execute(w, dg)
-}
-
-// CanVisualizeError returns true if the error is an errVisualizer.
-func CanVisualizeError(err error) bool {
-	for {
-		if _, ok := err.(errVisualizer); ok {
-			return true
-		}
-		e, ok := err.(causer)
-		if !ok {
-			break
-		}
-		err = e.cause()
-	}
-
-	return false
-}
-
-func (c *Container) createGraph() *dot.Graph {
-	dg := dot.NewGraph()
-
-	for _, n := range c.nodes {
-		dg.AddCtor(newDotCtor(n), n.paramList.DotParam(), n.resultList.DotResult())
-	}
-
-	return dg
 }
 
 // Changes the source of randomness for the container.
@@ -478,6 +380,12 @@ func (c *Container) Invoke(function interface{}, opts ...InvokeOption) error {
 		}
 	}
 
+	if !c.isVerifiedAcyclic {
+		if err := c.verifyAcyclic(); err != nil {
+			return err
+		}
+	}
+
 	args, err := pl.BuildList(c)
 	if err != nil {
 		return errArgumentsFailed{
@@ -498,8 +406,26 @@ func (c *Container) Invoke(function interface{}, opts ...InvokeOption) error {
 	return nil
 }
 
+func (c *Container) verifyAcyclic() error {
+	visited := make(map[key]struct{})
+	for _, n := range c.nodes {
+		if err := detectCycles(n, c, nil /* path */, visited); err != nil {
+			return errWrapf(err, "cycle detected in dependency graph")
+		}
+	}
+
+	c.isVerifiedAcyclic = true
+	return nil
+}
+
 func (c *Container) provide(ctor interface{}, opts provideOptions) error {
-	n, err := newNode(ctor, nodeOptions{ResultName: opts.Name})
+	n, err := newNode(
+		ctor,
+		nodeOptions{
+			ResultName:  opts.Name,
+			ResultGroup: opts.Group,
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -515,12 +441,18 @@ func (c *Container) provide(ctor interface{}, opts provideOptions) error {
 	}
 
 	for k := range keys {
-		oldProducers := c.providers[k]
-		c.providers[k] = append(oldProducers, n)
+		c.isVerifiedAcyclic = false
+		oldProviders := c.providers[k]
+		c.providers[k] = append(c.providers[k], n)
+
+		if c.deferAcyclicVerification {
+			continue
+		}
 		if err := verifyAcyclic(c, n, k); err != nil {
-			c.providers[k] = oldProducers
+			c.providers[k] = oldProviders
 			return err
 		}
+		c.isVerifiedAcyclic = true
 	}
 
 	c.nodes = append(c.nodes, n)
@@ -665,8 +597,10 @@ type node struct {
 }
 
 type nodeOptions struct {
-	// If specified, all values produced by this node have the provided name.
-	ResultName string
+	// If specified, all values produced by this node have the provided name
+	// or belong to the specified value group
+	ResultName  string
+	ResultGroup string
 }
 
 func newNode(ctor interface{}, opts nodeOptions) (*node, error) {
@@ -679,7 +613,13 @@ func newNode(ctor interface{}, opts nodeOptions) (*node, error) {
 		return nil, err
 	}
 
-	results, err := newResultList(ctype, resultOptions{Name: opts.ResultName})
+	results, err := newResultList(
+		ctype,
+		resultOptions{
+			Name:  opts.ResultName,
+			Group: opts.ResultGroup,
+		},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -831,14 +771,4 @@ func shuffledCopy(rand *rand.Rand, items []reflect.Value) []reflect.Value {
 		newItems[i] = items[j]
 	}
 	return newItems
-}
-
-func newDotCtor(n *node) *dot.Ctor {
-	return &dot.Ctor{
-		ID:      n.id,
-		Name:    n.location.Name,
-		Package: n.location.Package,
-		File:    n.location.File,
-		Line:    n.location.Line,
-	}
 }

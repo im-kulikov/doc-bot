@@ -1,17 +1,18 @@
 # Builder
-FROM golang:1.11.0-alpine3.8 as builder
+FROM golang:1.12-alpine3.9 as builder
 
-COPY . /go/src/github.com/im-kulikov/doc-bot
+COPY . /src/doc-bot
 
-WORKDIR /go/src/github.com/im-kulikov/doc-bot
+WORKDIR /src/doc-bot
+
+ARG VERSION=0.0.0-unknown
+ARG REPO=none
 
 RUN set -x \
-    && apk add --no-cache git \
-    && export VERSION=$(git rev-parse --short HEAD) \
     && export BUILD=$(date -u +%s%N) \
-    && export LDFLAGS="-w -s -X main.BuildVersion=${VERSION} -X main.BuildTime=${BUILD}" \
+    && export LDFLAGS="-w -s -X ${REPO}/misc.Version=${VERSION} -X ${REPO}/misc.Build=${BUILD}" \
     && export CGO_ENABLED=0 \
-    && go build -v -ldflags "${LDFLAGS}" -o /go/bin/docbot . \
+    && go build -mod=vendor -v -ldflags "${LDFLAGS}" -o /go/bin/docbot ./cmd/bot \
     && chmod 1755 /go/bin/docbot
 
 # Executable image
@@ -24,6 +25,6 @@ WORKDIR /
 
 COPY --from=builder /go/bin/docbot /docbot
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /go/src/github.com/im-kulikov/doc-bot/config.yml /config.yml
+COPY --from=builder /src/doc-bot/config.yml /config.yml
 
 CMD ["/docbot"]

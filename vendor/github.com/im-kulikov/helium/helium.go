@@ -2,13 +2,17 @@ package helium
 
 import (
 	"context"
+	"fmt"
 	stdlog "log"
 	"os"
+	"reflect"
+	"strings"
 
 	"github.com/im-kulikov/helium/logger"
 	"github.com/im-kulikov/helium/module"
 	"github.com/im-kulikov/helium/settings"
 	"github.com/spf13/viper"
+	"go.uber.org/atomic"
 	"go.uber.org/dig"
 	"go.uber.org/zap"
 )
@@ -24,6 +28,7 @@ type (
 		di *dig.Container
 	}
 
+	// Settings struct
 	Settings struct {
 		File         string
 		Type         string
@@ -32,6 +37,11 @@ type (
 		BuildTime    string
 		BuildVersion string
 	}
+)
+
+var (
+	appName    = atomic.NewString("helium")
+	appVersion = atomic.NewString("dev")
 )
 
 // New helium instance
@@ -44,12 +54,13 @@ func New(cfg *Settings, mod module.Module) (*Helium, error) {
 		if cfg.Prefix == "" {
 			cfg.Prefix = cfg.Name
 		}
+		cfg.Prefix = strings.ToUpper(cfg.Prefix)
 
-		if tmp := os.Getenv("HELIUM_CONFIG"); tmp != "" {
+		if tmp := os.Getenv(cfg.Prefix + "_CONFIG"); tmp != "" {
 			cfg.File = tmp
 		}
 
-		if tmp := os.Getenv("HELIUM_CONFIG_TYPE"); tmp != "" {
+		if tmp := os.Getenv(cfg.Prefix + "_CONFIG_TYPE"); tmp != "" {
 			cfg.Type = tmp
 		}
 
@@ -61,6 +72,9 @@ func New(cfg *Settings, mod module.Module) (*Helium, error) {
 			BuildTime:    cfg.BuildTime,
 			BuildVersion: cfg.BuildVersion,
 		}
+
+		appName.Store(cfg.Name)
+		appVersion.Store(cfg.BuildVersion)
 
 		mod = append(mod, core.Provider())
 	}
@@ -93,8 +107,8 @@ func Catch(err error) {
 	v := viper.New()
 	log, logErr := logger.
 		NewLogger(logger.NewLoggerConfig(v), &settings.Core{
-			Name:         "",
-			BuildVersion: "",
+			Name:         appName.Load(),
+			BuildVersion: appVersion.Load(),
 		})
 	if logErr != nil {
 		stdlog.Fatal(err)
@@ -102,4 +116,38 @@ func Catch(err error) {
 		log.Fatal("Can't run app",
 			zap.Error(err))
 	}
+}
+
+// CatchTrace catch errors for debugging
+// use that function just for debug your application
+func CatchTrace(err error) {
+	if err == nil {
+		return
+	}
+
+	// digging into the root of the problem
+	for {
+		var (
+			ok bool
+			v  = reflect.ValueOf(err)
+			fn reflect.Value
+		)
+
+		if v.Type().Kind() != reflect.Struct {
+			break
+		} else if !v.FieldByName("Reason").IsValid() {
+			break
+		} else if v.FieldByName("Func").IsValid() {
+			fn = v.FieldByName("Func")
+		}
+
+		fmt.Printf("Place: %#v\nReason: %s\n\n", fn, err)
+
+		if err, ok = v.FieldByName("Reason").Interface().(error); !ok {
+			err = v.Interface().(error)
+			break
+		}
+	}
+
+	panic(err)
 }

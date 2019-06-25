@@ -1,6 +1,8 @@
 package logger
 
 import (
+	"strings"
+
 	"github.com/im-kulikov/helium/settings"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
@@ -9,32 +11,69 @@ import (
 
 // Config for logger
 type Config struct {
-	Level  string
-	Format string
+	Level        string
+	TraceLevel   string
+	Format       string
+	Debug        bool
+	Color        bool
+	FullCaller   bool
+	NoDisclaimer bool
+	Sampling     *zap.SamplingConfig
 }
+
+const (
+	defaultSamplingInitial    = 100
+	defaultSamplingThereafter = 100
+)
 
 // NewLoggerConfig returns logger config
 func NewLoggerConfig(v *viper.Viper) *Config {
-	return &Config{
-		Level:  v.GetString("logger.level"),
-		Format: v.GetString("logger.format"),
+	cfg := &Config{
+		Debug:        v.GetBool("debug"),
+		Level:        v.GetString("logger.level"),
+		TraceLevel:   v.GetString("logger.trace_level"),
+		Format:       v.GetString("logger.format"),
+		Color:        v.GetBool("logger.color"),
+		FullCaller:   v.GetBool("logger.full_caller"),
+		NoDisclaimer: v.GetBool("logger.no_disclaimer"),
 	}
+
+	if v.IsSet("logger.sampling") {
+		cfg.Sampling = &zap.SamplingConfig{
+			Initial:    defaultSamplingInitial,
+			Thereafter: defaultSamplingThereafter,
+		}
+
+		if val := v.GetInt("logger.sampling.initial"); val > 0 {
+			cfg.Sampling.Initial = val
+		}
+
+		if val := v.GetInt("logger.sampling.thereafter"); val > 0 {
+			cfg.Sampling.Thereafter = val
+		}
+	}
+
+	return cfg
 }
 
-// SafeLevel returns valid logger level
-// use info level by default
-func (c Config) SafeLevel() string {
-	switch c.Level {
-	case "debug", "DEBUG":
-	case "info", "INFO":
-	case "warn", "WARN":
-	case "error", "ERROR":
-	case "panic", "PANIC":
-	case "fatal", "FATAL":
+// SafeLevel returns valid logger level or default
+func SafeLevel(lvl string, defaultLvl zapcore.Level) zap.AtomicLevel {
+	switch strings.ToLower(lvl) {
+	case "debug":
+		return zap.NewAtomicLevelAt(zapcore.DebugLevel)
+	case "info":
+		return zap.NewAtomicLevelAt(zapcore.InfoLevel)
+	case "warn":
+		return zap.NewAtomicLevelAt(zapcore.WarnLevel)
+	case "error":
+		return zap.NewAtomicLevelAt(zapcore.ErrorLevel)
+	case "panic":
+		return zap.NewAtomicLevelAt(zapcore.PanicLevel)
+	case "fatal":
+		return zap.NewAtomicLevelAt(zapcore.FatalLevel)
 	default:
-		return "info"
+		return zap.NewAtomicLevelAt(defaultLvl)
 	}
-	return c.Level
 }
 
 // SafeFormat returns valid logger output format
@@ -56,22 +95,44 @@ func NewSugaredLogger(log *zap.Logger) *zap.SugaredLogger {
 
 // NewLogger init logger
 func NewLogger(lcfg *Config, app *settings.Core) (*zap.Logger, error) {
-	cfg := zap.NewProductionConfig()
+	var cfg zap.Config
+	if lcfg.Debug {
+		cfg = zap.NewDevelopmentConfig()
+	} else {
+		cfg = zap.NewProductionConfig()
+	}
+
+	if lcfg.Sampling != nil {
+		cfg.Sampling = lcfg.Sampling
+	}
+
 	cfg.OutputPaths = []string{"stdout"}
 	cfg.ErrorOutputPaths = []string{"stdout"}
 
 	cfg.Encoding = lcfg.SafeFormat()
 	cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 
-	var lvl zapcore.Level
-	if err := lvl.Set(lcfg.Level); err != nil {
-		return nil, err
+	if lcfg.Color {
+		cfg.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
 	}
-	cfg.Level = zap.NewAtomicLevelAt(lvl)
 
-	l, err := cfg.Build()
+	if lcfg.FullCaller {
+		cfg.EncoderConfig.EncodeCaller = zapcore.FullCallerEncoder
+	}
+
+	cfg.Level = SafeLevel(lcfg.Level, zapcore.InfoLevel)
+	traceLevel := SafeLevel(lcfg.TraceLevel, zapcore.WarnLevel)
+
+	l, err := cfg.Build(
+		// enable trace only for current log-level
+		zap.AddStacktrace(traceLevel))
 	if err != nil {
 		return nil, err
+	}
+
+	// don't display app name and version
+	if lcfg.NoDisclaimer {
+		return l, nil
 	}
 
 	return l.With(
